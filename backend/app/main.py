@@ -56,10 +56,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow frontend dev server
+# CORS — allow frontend dev server and production deployments (Vercel, localhost)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Dev mode: accept all origins
+    allow_origin_regex=r"^https?:\/\/.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

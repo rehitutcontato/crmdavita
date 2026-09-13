@@ -3,8 +3,20 @@
  * All types match the Pydantic schemas defined in backend/app/models/domain.py
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+const rawApiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
+
+const getWsBase = () => {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL.replace(/\/+$/, "");
+  }
+  if (API_BASE.startsWith("https://")) {
+    return API_BASE.replace(/^https:\/\//, "wss://");
+  }
+  return API_BASE.replace(/^http:\/\//, "ws://");
+};
+
+const WS_BASE = getWsBase();
 
 // ---------------------------------------------------------------------------
 // Domain types (mirror of Pydantic schemas)
