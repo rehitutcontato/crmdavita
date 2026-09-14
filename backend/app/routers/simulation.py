@@ -5,8 +5,13 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.data.seed import SeedData
+from app.models.domain import MobileActivation
 from app.simulation.clock import simulation_clock
-from app.simulation.engine import start_simulation, stop_simulation
+from app.simulation.engine import (
+    get_recent_activations,
+    start_simulation,
+    stop_simulation,
+)
 from app.state.store import app_state
 
 router = APIRouter(prefix="/simulation", tags=["simulation"])
@@ -51,3 +56,8 @@ async def reset_simulation() -> dict[str, str]:
 @router.get("/status")
 async def simulation_status() -> dict[str, object]:
     return simulation_clock.status()
+
+
+@router.get("/activations/recent")
+async def recent_activations() -> list[MobileActivation]:
+    return get_recent_activations()

@@ -25,11 +25,99 @@ import {
   WS_BASE,
   type ChurnAlert,
   type DashboardSummary,
+  type MobileActivation,
   type Offer,
   type StorePerformance,
   type Transaction,
   type WSEvent,
 } from "@/lib/api";
+
+// ---------------------------------------------------------------------------
+// Initial Seed Activations for Immediate Visual Richness
+// ---------------------------------------------------------------------------
+
+const INITIAL_ACTIVATIONS: MobileActivation[] = [
+  {
+    id: "ACT-8492",
+    customer_cpf: "342.***.***-89",
+    customer_name: "Mariana O.",
+    product_id: "prod-1",
+    product_name: "Cerveja Brahma Lata 350ml",
+    category: "bebidas",
+    sponsor_brand: "Ambev",
+    discount_pct: 15,
+    store_id: "loja-01",
+    store_name: "Loja 01 - Centro",
+    neighborhood: "Bela Vista",
+    distance_km: 0.8,
+    timestamp: new Date(Date.now() - 3500).toISOString(),
+    liquidated: true,
+  },
+  {
+    id: "ACT-7319",
+    customer_cpf: "198.***.***-34",
+    customer_name: "Rodrigo M.",
+    product_id: "prod-18",
+    product_name: "Sabão em Pó OMO 1.6kg",
+    category: "limpeza",
+    sponsor_brand: "Unilever",
+    discount_pct: 20,
+    store_id: "loja-02",
+    store_name: "Loja 02 - Jardim São Paulo",
+    neighborhood: "Vila Mariana",
+    distance_km: 1.2,
+    timestamp: new Date(Date.now() - 8000).toISOString(),
+    liquidated: true,
+  },
+  {
+    id: "ACT-6204",
+    customer_cpf: "512.***.***-71",
+    customer_name: "Carla S.",
+    product_id: "prod-6",
+    product_name: "Leite Integral Ninho 1L",
+    category: "laticínios",
+    sponsor_brand: "Nestlé",
+    discount_pct: 12,
+    store_id: "loja-03",
+    store_name: "Loja 03 - Zona Norte",
+    neighborhood: "Santana",
+    distance_km: 0.6,
+    timestamp: new Date(Date.now() - 14000).toISOString(),
+    liquidated: false,
+  },
+  {
+    id: "ACT-5182",
+    customer_cpf: "784.***.***-22",
+    customer_name: "Lucas P.",
+    product_id: "prod-3",
+    product_name: "Red Bull Energy 250ml",
+    category: "bebidas",
+    sponsor_brand: "Red Bull",
+    discount_pct: 18,
+    store_id: "loja-06",
+    store_name: "Loja 06 - Bairro Alto",
+    neighborhood: "Perdizes",
+    distance_km: 2.1,
+    timestamp: new Date(Date.now() - 21000).toISOString(),
+    liquidated: true,
+  },
+  {
+    id: "ACT-4091",
+    customer_cpf: "903.***.***-55",
+    customer_name: "Fernanda T.",
+    product_id: "prod-7",
+    product_name: "Iogurte Danone Natural 170g",
+    category: "laticínios",
+    sponsor_brand: "Danone",
+    discount_pct: 15,
+    store_id: "loja-04",
+    store_name: "Loja 04 - Vila Industrial",
+    neighborhood: "Tatuapé",
+    distance_km: 3.4,
+    timestamp: new Date(Date.now() - 29000).toISOString(),
+    liquidated: false,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // State shape
@@ -41,6 +129,7 @@ interface LiveState {
   churnAlerts: ChurnAlert[];
   recentTransactions: Transaction[];
   customerOffers: Offer[];
+  liveActivations: MobileActivation[];
   demoCPF: string;
   connected: boolean;
   loading: boolean;
@@ -53,6 +142,7 @@ const initialState: LiveState = {
   churnAlerts: [],
   recentTransactions: [],
   customerOffers: [],
+  liveActivations: INITIAL_ACTIVATIONS,
   demoCPF: "",
   connected: false,
   loading: true,
@@ -67,6 +157,8 @@ type Action =
   | { type: "SET_INITIAL_DATA"; payload: Partial<LiveState> }
   | { type: "SET_DASHBOARD"; payload: DashboardSummary }
   | { type: "ADD_TRANSACTION"; payload: Transaction }
+  | { type: "ADD_ACTIVATION"; payload: MobileActivation }
+  | { type: "SET_ACTIVATIONS"; payload: MobileActivation[] }
   | { type: "ADD_CHURN_ALERT"; payload: ChurnAlert }
   | { type: "SET_CHURN_ALERTS"; payload: ChurnAlert[] }
   | { type: "ADD_OFFER"; payload: Offer }
@@ -87,9 +179,29 @@ function reducer(state: LiveState, action: Action): LiveState {
       return { ...state, dashboard: action.payload };
 
     case "ADD_TRANSACTION": {
-      const txns = [action.payload, ...state.recentTransactions].slice(0, 10);
-      return { ...state, recentTransactions: txns };
+      const txn = action.payload;
+      const txns = [txn, ...state.recentTransactions].slice(0, 15);
+      // Correlate: if transaction has linked_activation_id, mark that activation as liquidated
+      let acts = state.liveActivations;
+      if (txn.linked_activation_id) {
+        acts = acts.map((a) =>
+          a.id === txn.linked_activation_id ? { ...a, liquidated: true } : a
+        );
+      }
+      return { ...state, recentTransactions: txns, liveActivations: acts };
     }
+
+    case "ADD_ACTIVATION": {
+      const exists = state.liveActivations.some((a) => a.id === action.payload.id);
+      if (exists) return state;
+      return {
+        ...state,
+        liveActivations: [action.payload, ...state.liveActivations].slice(0, 25),
+      };
+    }
+
+    case "SET_ACTIVATIONS":
+      return { ...state, liveActivations: action.payload };
 
     case "ADD_CHURN_ALERT": {
       const exists = state.churnAlerts.some((a) => a.id === action.payload.id);
@@ -176,7 +288,10 @@ export function LiveStoreProvider({ children }: { children: React.ReactNode }) {
 
       demoCPFRef.current = demoRes.demo_cpf;
 
-      const offers = await api.getOffers(demoRes.demo_cpf);
+      const [offers, acts] = await Promise.all([
+        api.getOffers(demoRes.demo_cpf),
+        api.getRecentActivations().catch(() => []),
+      ]);
 
       dispatch({
         type: "SET_INITIAL_DATA",
@@ -186,6 +301,7 @@ export function LiveStoreProvider({ children }: { children: React.ReactNode }) {
           churnAlerts: alerts,
           recentTransactions: txns,
           customerOffers: offers,
+          liveActivations: acts && acts.length > 0 ? acts : INITIAL_ACTIVATIONS,
           demoCPF: demoRes.demo_cpf,
         },
       });
@@ -234,6 +350,10 @@ export function LiveStoreProvider({ children }: { children: React.ReactNode }) {
     switch (type) {
       case "transaction.created":
         dispatch({ type: "ADD_TRANSACTION", payload: payload as unknown as Transaction });
+        break;
+
+      case "activation.created":
+        dispatch({ type: "ADD_ACTIVATION", payload: payload as unknown as MobileActivation });
         break;
 
       case "dashboard.summary_updated":

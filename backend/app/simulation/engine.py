@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from app.models.domain import (
     ChurnAlert,
     Customer,
+    MobileActivation,
     Offer,
     Transaction,
     TransactionItem,
@@ -29,13 +30,65 @@ logging.basicConfig(level=logging.INFO)
 
 _tasks: list[asyncio.Task[None]] = []
 
+STORE_NEIGHBORHOODS: dict[str, list[dict[str, Any]]] = {
+    "loja-01": [
+        {"name": "Centro Histórico", "dist": 0.4},
+        {"name": "Bela Vista", "dist": 0.8},
+        {"name": "República", "dist": 1.2},
+        {"name": "Consolação", "dist": 2.1},
+        {"name": "Higienópolis", "dist": 3.4},
+    ],
+    "loja-02": [
+        {"name": "Jardim São Paulo", "dist": 0.5},
+        {"name": "Vila Mariana", "dist": 0.9},
+        {"name": "Saúde", "dist": 1.8},
+        {"name": "Moema", "dist": 2.7},
+        {"name": "Brooklin", "dist": 3.8},
+    ],
+    "loja-03": [
+        {"name": "Santana", "dist": 0.6},
+        {"name": "Tucuruvi", "dist": 1.3},
+        {"name": "Parada Inglesa", "dist": 1.9},
+        {"name": "Vila Guilherme", "dist": 2.6},
+        {"name": "Mandaqui", "dist": 3.5},
+    ],
+    "loja-04": [
+        {"name": "Vila Industrial", "dist": 0.5},
+        {"name": "Tatuapé", "dist": 1.4},
+        {"name": "Mooca", "dist": 2.2},
+        {"name": "Anália Franco", "dist": 2.9},
+        {"name": "Água Rasa", "dist": 3.6},
+    ],
+    "loja-05": [
+        {"name": "Alphaville", "dist": 0.7},
+        {"name": "Tamboré", "dist": 1.6},
+        {"name": "Granja Viana", "dist": 2.8},
+        {"name": "Carapicuíba", "dist": 3.7},
+    ],
+    "loja-06": [
+        {"name": "Bairro Alto", "dist": 0.5},
+        {"name": "Perdizes", "dist": 1.1},
+        {"name": "Pompeia", "dist": 1.8},
+        {"name": "Sumaré", "dist": 2.5},
+        {"name": "Pinheiros", "dist": 3.4},
+    ],
+}
+
+_recent_activations: list[MobileActivation] = []
+_pending_cause_effect_queue: list[MobileActivation] = []
+
+
+def get_recent_activations() -> list[MobileActivation]:
+    """Return in-memory recent mobile activations."""
+    return list(_recent_activations)
+
 
 def _uid() -> str:
     return uuid.uuid4().hex[:12]
 
 
 # ---------------------------------------------------------------------------
-# Loop A — Transaction Generation
+# Loop A — Transaction Generation (with Mirrored Cause & Effect)
 # ---------------------------------------------------------------------------
 
 async def _loop_transaction_generation() -> None:
@@ -51,97 +104,148 @@ async def _loop_transaction_generation() -> None:
 
             now = datetime.utcnow()
 
-            # 1. Pick a random store
-            store_ids = list(app_state.stores.keys())
-            store_id = random.choice(store_ids)
+            # Check if there is a pending correlated activation to liquidate
+            correlated_act: MobileActivation | None = None
+            if _pending_cause_effect_queue and random.random() < 0.75:
+                oldest = _pending_cause_effect_queue[0]
+                if (now - oldest.timestamp).total_seconds() >= 1.0:
+                    correlated_act = _pending_cause_effect_queue.pop(0)
 
-            # 2. Pick 1-5 products for the cart
-            all_products = list(app_state.products.values())
-            n_items = random.randint(1, 5)
-            selected_products = random.sample(
-                all_products, min(n_items, len(all_products))
-            )
+            if correlated_act:
+                # Correlated Cause-and-Effect Transaction at POS
+                store_id = correlated_act.store_id
+                customer_cpf = correlated_act.customer_cpf
+                used_club_cpf = True
+                linked_activation_id = correlated_act.id
+                linked_offer_id = f"OFF-{correlated_act.id}"
+                pos_id = f"PDV #{random.randint(1, 8):02d}"
 
-            items: list[TransactionItem] = []
-            cart_categories: set[str] = set()
-            total_value = 0.0
+                items: list[TransactionItem] = []
+                act_prod = app_state.products.get(correlated_act.product_id)
+                discount_amount = 0.0
+                total_value = 0.0
 
-            for prod in selected_products:
-                qty = random.randint(1, 4)
-                items.append(
-                    TransactionItem(
-                        product_id=prod.id,
-                        qty=qty,
-                        unit_price=prod.price,
+                if act_prod:
+                    qty = random.randint(1, 3)
+                    item_base = act_prod.price * qty
+                    disc = item_base * (correlated_act.discount_pct / 100.0)
+                    discount_amount += disc
+                    total_value += item_base - disc
+                    items.append(
+                        TransactionItem(
+                            product_id=act_prod.id,
+                            qty=qty,
+                            unit_price=act_prod.price,
+                        )
                     )
-                )
-                total_value += prod.price * qty
-                cart_categories.add(prod.category)
 
-            # 3. ~72% chance of CPF identification
-            used_club_cpf = random.random() < 0.72
-            customer_cpf: str | None = None
-            linked_offer_id: str | None = None
-            discount_amount = 0.0
-
-            if used_club_cpf:
-                customer_list = list(app_state.customers.values())
-                customer = random.choice(customer_list)
-                customer_cpf = customer.cpf
-
-                # 4. Check if customer has an activated offer matching cart categories
-                customer_offers = [
-                    o
-                    for o in app_state.offers.values()
-                    if o.customer_cpf == customer_cpf
-                    and o.status == "ativada"
-                    and o.category in cart_categories
+                # Complementary basket items (Basket lift demo)
+                other_prods = [
+                    p for p in app_state.products.values() if p.id != correlated_act.product_id
                 ]
+                if other_prods:
+                    n_extra = random.randint(1, 3)
+                    for ep in random.sample(other_prods, min(n_extra, len(other_prods))):
+                        eqty = random.randint(1, 2)
+                        items.append(
+                            TransactionItem(
+                                product_id=ep.id,
+                                qty=eqty,
+                                unit_price=ep.price,
+                            )
+                        )
+                        total_value += ep.price * eqty
+            else:
+                # 1. Pick a random store
+                store_ids = list(app_state.stores.keys())
+                store_id = random.choice(store_ids)
+                pos_id = f"PDV #{random.randint(1, 8):02d}"
 
-                if customer_offers:
-                    offer = customer_offers[0]  # redeem the first matching offer
+                # 2. Pick 1-5 products for the cart
+                all_products = list(app_state.products.values())
+                n_items = random.randint(1, 5)
+                selected_products = random.sample(
+                    all_products, min(n_items, len(all_products))
+                )
 
-                    # Apply discount to items in that category
-                    for item in items:
-                        product = app_state.products.get(item.product_id)
-                        if product and product.category == offer.category:
-                            item_discount = item.unit_price * item.qty * (offer.discount_pct / 100.0)
-                            discount_amount += item_discount
-                            total_value -= item_discount
+                items = []
+                cart_categories: set[str] = set()
+                total_value = 0.0
 
-                    # Compute incremental value
-                    avg_ticket = (
-                        customer.total_spent / customer.purchase_count
-                        if customer.purchase_count > 0
-                        else total_value
+                for prod in selected_products:
+                    qty = random.randint(1, 4)
+                    items.append(
+                        TransactionItem(
+                            product_id=prod.id,
+                            qty=qty,
+                            unit_price=prod.price,
+                        )
                     )
-                    incremental = max(0.0, total_value - avg_ticket)
+                    total_value += prod.price * qty
+                    cart_categories.add(prod.category)
 
-                    # Mark offer as redeemed
-                    offer.status = "resgatada"
-                    offer.redeemed_at = now
-                    offer.store_id = store_id
-                    offer.incremental_value = round(incremental, 2)
-                    linked_offer_id = offer.id
+                # 3. ~72% chance of CPF identification
+                used_club_cpf = random.random() < 0.72
+                customer_cpf = None
+                linked_offer_id = None
+                linked_activation_id = None
+                discount_amount = 0.0
 
-                    # Record redemption in state
-                    app_state.record_offer_redemption(offer, discount_amount)
+                if used_club_cpf:
+                    customer_list = list(app_state.customers.values())
+                    customer = random.choice(customer_list)
+                    customer_cpf = customer.cpf
 
-                    # Broadcast offer redemption event
-                    await ws_manager.broadcast(
-                        "offer.redeemed",
-                        offer.model_dump(mode="json"),
-                    )
+                    # 4. Check if customer has an activated offer matching cart categories
+                    customer_offers = [
+                        o
+                        for o in app_state.offers.values()
+                        if o.customer_cpf == customer_cpf
+                        and o.status == "ativada"
+                        and o.category in cart_categories
+                    ]
+
+                    if customer_offers:
+                        offer = customer_offers[0]
+                        for item in items:
+                            product = app_state.products.get(item.product_id)
+                            if product and product.category == offer.category:
+                                item_discount = (
+                                    item.unit_price * item.qty * (offer.discount_pct / 100.0)
+                                )
+                                discount_amount += item_discount
+                                total_value -= item_discount
+
+                        avg_ticket = (
+                            customer.total_spent / customer.purchase_count
+                            if customer.purchase_count > 0
+                            else total_value
+                        )
+                        incremental = max(0.0, total_value - avg_ticket)
+
+                        offer.status = "resgatada"
+                        offer.redeemed_at = now
+                        offer.store_id = store_id
+                        offer.incremental_value = round(incremental, 2)
+                        linked_offer_id = offer.id
+
+                        app_state.record_offer_redemption(offer, discount_amount)
+                        await ws_manager.broadcast(
+                            "offer.redeemed",
+                            offer.model_dump(mode="json"),
+                        )
 
             # 5. Create and persist the transaction
             txn = Transaction(
                 id=_uid(),
                 store_id=store_id,
+                pos_id=pos_id,
                 customer_cpf=customer_cpf,
                 items=items,
                 total_value=round(total_value, 2),
                 used_club_cpf=used_club_cpf,
                 linked_offer_id=linked_offer_id,
+                linked_activation_id=linked_activation_id,
                 timestamp=now,
             )
 
@@ -304,16 +408,103 @@ async def _loop_offer_expiration() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Loop D — Mobile Offer Activations
+# ---------------------------------------------------------------------------
+
+async def _loop_mobile_activations() -> None:
+    """Simulate real-time mobile app offer activations every 2.5 - 3.5 seconds."""
+    logger.info("Loop D (Mobile Activations) started")
+    while True:
+        try:
+            base_interval = random.uniform(2.5, 3.5)
+            await simulation_clock.sleep(base_interval)
+
+            if simulation_clock.paused:
+                continue
+
+            now = datetime.utcnow()
+            store_ids = list(app_state.stores.keys())
+            if not store_ids or not app_state.products or not app_state.customers:
+                continue
+
+            store_id = random.choice(store_ids)
+            store = app_state.stores[store_id]
+            customer = random.choice(list(app_state.customers.values()))
+
+            eligible_products = app_state.sponsored_products or list(app_state.products.values())
+            product = random.choice(eligible_products)
+            sponsor = product.sponsor_brand or random.choice(
+                ["Ambev", "Nestlé", "Unilever", "Danone", "Red Bull"]
+            )
+
+            # Realistic geodistribution: 42% < 1km, 38% 1-3km, 20% > 3km
+            roll = random.random()
+            nh_options = STORE_NEIGHBORHOODS.get(
+                store_id, [{"name": store.region, "dist": 1.2}]
+            )
+            if roll < 0.42:
+                candidates = [nh for nh in nh_options if nh["dist"] < 1.0]
+            elif roll < 0.80:
+                candidates = [nh for nh in nh_options if 1.0 <= nh["dist"] <= 3.0]
+            else:
+                candidates = [nh for nh in nh_options if nh["dist"] > 3.0]
+
+            chosen_nh = random.choice(candidates if candidates else nh_options)
+            act_id = f"ACT-{random.randint(1000, 9999)}"
+            discount_pct = random.choice([10.0, 15.0, 18.0, 20.0, 25.0])
+
+            act = MobileActivation(
+                id=act_id,
+                customer_cpf=customer.cpf,
+                customer_name=customer.name,
+                product_id=product.id,
+                product_name=product.name,
+                category=product.category,
+                sponsor_brand=sponsor,
+                discount_pct=discount_pct,
+                store_id=store_id,
+                store_name=store.name,
+                neighborhood=chosen_nh["name"],
+                distance_km=chosen_nh["dist"],
+                timestamp=now,
+            )
+
+            _recent_activations.insert(0, act)
+            if len(_recent_activations) > 30:
+                _recent_activations.pop()
+
+            # Broadcast activation event
+            await ws_manager.broadcast(
+                "activation.created",
+                act.model_dump(mode="json"),
+            )
+
+            # 70% chance to queue for simulated checkout liquidation (cause & effect)
+            if random.random() < 0.70:
+                _pending_cause_effect_queue.append(act)
+                if len(_pending_cause_effect_queue) > 15:
+                    _pending_cause_effect_queue.pop(0)
+
+        except asyncio.CancelledError:
+            logger.info("Loop D cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Loop D error: {e}", exc_info=True)
+            await asyncio.sleep(1)
+
+
+# ---------------------------------------------------------------------------
 # Engine control
 # ---------------------------------------------------------------------------
 
 def start_simulation() -> None:
-    """Launch all three simulation loops as background tasks."""
+    """Launch all simulation loops as background tasks."""
     loop = asyncio.get_event_loop()
     _tasks.clear()
     _tasks.append(loop.create_task(_loop_transaction_generation()))
     _tasks.append(loop.create_task(_loop_churn_radar()))
     _tasks.append(loop.create_task(_loop_offer_expiration()))
+    _tasks.append(loop.create_task(_loop_mobile_activations()))
     logger.info("All simulation loops started")
 
 

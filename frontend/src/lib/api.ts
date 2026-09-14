@@ -86,14 +86,33 @@ export interface Offer {
   incremental_value: number | null;
 }
 
+export interface MobileActivation {
+  id: string;
+  customer_cpf: string;
+  customer_name: string;
+  product_id: string;
+  product_name: string;
+  category: string;
+  sponsor_brand: string;
+  discount_pct: number;
+  store_id: string;
+  store_name: string;
+  neighborhood: string;
+  distance_km: number;
+  timestamp: string;
+  liquidated?: boolean;
+}
+
 export interface Transaction {
   id: string;
   store_id: string;
+  pos_id?: string | null;
   customer_cpf: string | null;
   items: TransactionItem[];
   total_value: number;
   used_club_cpf: boolean;
   linked_offer_id: string | null;
+  linked_activation_id?: string | null;
   timestamp: string;
 }
 
@@ -211,9 +230,11 @@ export const api = {
       { method: "POST" }
     ),
 
-  // Transactions
+  // Transactions & Activations
   getRecentTransactions: (limit = 5) =>
     fetchJSON<Transaction[]>(`/transactions/recent?limit=${limit}`),
+  getRecentActivations: () =>
+    fetchJSON<MobileActivation[]>("/simulation/activations/recent"),
 
   // Simulation control
   pauseSimulation: () => fetchJSON<{ status: string }>("/simulation/pause", { method: "POST" }),

@@ -85,14 +85,32 @@ class Offer(BaseModel):
     incremental_value: float | None = None
 
 
+class MobileActivation(BaseModel):
+    id: str
+    customer_cpf: str
+    customer_name: str = ""
+    product_id: str
+    product_name: str
+    category: str
+    sponsor_brand: str
+    discount_pct: float
+    store_id: str
+    store_name: str
+    neighborhood: str
+    distance_km: float
+    timestamp: datetime
+
+
 class Transaction(BaseModel):
     id: str
     store_id: str
+    pos_id: str | None = None
     customer_cpf: str | None = None
     items: list[TransactionItem]
     total_value: float
     used_club_cpf: bool
     linked_offer_id: str | None = None
+    linked_activation_id: str | None = None
     timestamp: datetime
 
 

@@ -14,6 +14,9 @@ import { CRMRetailMediaBlock } from "@/components/diretoria/CRMRetailMediaBlock"
 import { ChurnRadarBlock } from "@/components/diretoria/ChurnRadarBlock";
 import { StorePerformanceTable } from "@/components/diretoria/StorePerformanceTable";
 import { LiveTransactionFeed } from "@/components/diretoria/LiveTransactionFeed";
+import { RetailMediaCampaignFunnel } from "@/components/diretoria/RetailMediaCampaignFunnel";
+import { GeoIntelligencePanel } from "@/components/diretoria/GeoIntelligencePanel";
+import { MirroredEventFeed } from "@/components/diretoria/MirroredEventFeed";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Sparkles, ShoppingBag } from "lucide-react";
 
@@ -34,6 +37,7 @@ function DashboardContent() {
     storePerformance,
     churnAlerts,
     recentTransactions,
+    liveActivations,
     customerOffers,
     demoCPF,
     connected,
@@ -154,6 +158,18 @@ function DashboardContent() {
                   metrics={dashboard?.crm_preditivo_retail_media}
                 />
 
+                {/* Módulo 1 — Funil de Conversão & Produtos Mais Clicados (Retail Media) */}
+                <RetailMediaCampaignFunnel
+                  metrics={dashboard?.crm_preditivo_retail_media}
+                  recentTransactions={recentTransactions}
+                />
+
+                {/* Módulo 2 — Geointeligência de Ativação e Raio de Influência */}
+                <GeoIntelligencePanel
+                  activations={liveActivations}
+                  stores={storePerformance}
+                />
+
                 {/* Bloco 3 — Radar de Churn Silencioso */}
                 <ChurnRadarBlock
                   metrics={dashboard?.churn_radar}
@@ -166,11 +182,14 @@ function DashboardContent() {
                   }}
                 />
 
-                {/* Store Performance & Live Feeds */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <StorePerformanceTable stores={storePerformance} />
-                  <LiveTransactionFeed transactions={recentTransactions} />
-                </div>
+                {/* Store Performance Table */}
+                <StorePerformanceTable stores={storePerformance} />
+
+                {/* Módulo 3 — Feed Espelhado de Causa e Efeito (Mobile vs. PDV) */}
+                <MirroredEventFeed
+                  activations={liveActivations}
+                  transactions={recentTransactions}
+                />
               </div>
             )}
 
@@ -237,6 +256,16 @@ function DashboardContent() {
                       metrics={dashboard?.crm_preditivo_retail_media}
                     />
 
+                    <RetailMediaCampaignFunnel
+                      metrics={dashboard?.crm_preditivo_retail_media}
+                      recentTransactions={recentTransactions}
+                    />
+
+                    <GeoIntelligencePanel
+                      activations={liveActivations}
+                      stores={storePerformance}
+                    />
+
                     <ChurnRadarBlock
                       metrics={dashboard?.churn_radar}
                       alerts={churnAlerts}
@@ -250,7 +279,10 @@ function DashboardContent() {
 
                     <StorePerformanceTable stores={storePerformance} />
 
-                    <LiveTransactionFeed transactions={recentTransactions} />
+                    <MirroredEventFeed
+                      activations={liveActivations}
+                      transactions={recentTransactions}
+                    />
                   </div>
                 </div>
               </div>
